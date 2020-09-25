@@ -48,8 +48,6 @@ const (
 	// Pods with the given ids have unexpected status in this source,
 	// kubelet should reconcile status with this source
 	RECONCILE
-	// Pods with the given ids have been restored from a checkpoint.
-	RESTORE
 
 	// These constants identify the sources of pods
 	// Updates from a file
@@ -88,9 +86,8 @@ func GetValidatedSources(sources []string) ([]string, error) {
 			return []string{FileSource, HTTPSource, ApiserverSource}, nil
 		case FileSource, HTTPSource, ApiserverSource:
 			validated = append(validated, source)
-			break
 		case "":
-			break
+			// Skip
 		default:
 			return []string{}, fmt.Errorf("unknown pod source %q", source)
 		}
@@ -138,8 +135,26 @@ func (sp SyncPodType) String() string {
 	}
 }
 
+// IsMirrorPod returns true if the passed Pod is a Mirror Pod.
+func IsMirrorPod(pod *v1.Pod) bool {
+	_, ok := pod.Annotations[ConfigMirrorAnnotationKey]
+	return ok
+}
+
+// IsStaticPod returns true if the pod is a static pod.
+func IsStaticPod(pod *v1.Pod) bool {
+	source, err := GetPodSource(pod)
+	return err == nil && source != ApiserverSource
+}
+
 // IsCriticalPod returns true if pod's priority is greater than or equal to SystemCriticalPriority.
 func IsCriticalPod(pod *v1.Pod) bool {
+	if IsStaticPod(pod) {
+		return true
+	}
+	if IsMirrorPod(pod) {
+		return true
+	}
 	if pod.Spec.Priority != nil && IsCriticalPodBasedOnPriority(*pod.Spec.Priority) {
 		return true
 	}
@@ -162,8 +177,5 @@ func Preemptable(preemptor, preemptee *v1.Pod) bool {
 
 // IsCriticalPodBasedOnPriority checks if the given pod is a critical pod based on priority resolved from pod Spec.
 func IsCriticalPodBasedOnPriority(priority int32) bool {
-	if priority >= scheduling.SystemCriticalPriority {
-		return true
-	}
-	return false
+	return priority >= scheduling.SystemCriticalPriority
 }

@@ -35,10 +35,11 @@ const (
 	// defaultTestingTolerance is default value for calculating when to
 	// scale up/scale down.
 	defaultTestingTolerance                     = 0.1
-	defaultTestingCpuInitializationPeriod       = 2 * time.Minute
+	defaultTestingCPUInitializationPeriod       = 2 * time.Minute
 	defaultTestingDelayOfInitialReadinessStatus = 10 * time.Second
 )
 
+// ReplicaCalculator bundles all needed information to calculate the target amount of replicas
 type ReplicaCalculator struct {
 	metricsClient                 metricsclient.MetricsClient
 	podLister                     corelisters.PodLister
@@ -47,6 +48,7 @@ type ReplicaCalculator struct {
 	delayOfInitialReadinessStatus time.Duration
 }
 
+// NewReplicaCalculator creates a new ReplicaCalculator and passes all necessary information to the new instance
 func NewReplicaCalculator(metricsClient metricsclient.MetricsClient, podLister corelisters.PodLister, tolerance float64, cpuInitializationPeriod, delayOfInitialReadinessStatus time.Duration) *ReplicaCalculator {
 	return &ReplicaCalculator{
 		metricsClient:                 metricsClient,
@@ -134,9 +136,15 @@ func (c *ReplicaCalculator) GetResourceReplicas(currentReplicas int32, targetUti
 		return currentReplicas, utilization, rawUtilization, timestamp, nil
 	}
 
+	newReplicas := int32(math.Ceil(newUsageRatio * float64(len(metrics))))
+	if (newUsageRatio < 1.0 && newReplicas > currentReplicas) || (newUsageRatio > 1.0 && newReplicas < currentReplicas) {
+		// return the current replicas if the change of metrics length would cause a change in scale direction
+		return currentReplicas, utilization, rawUtilization, timestamp, nil
+	}
+
 	// return the result, where the number of replicas considered is
 	// however many replicas factored into our calculation
-	return int32(math.Ceil(newUsageRatio * float64(len(metrics)))), utilization, rawUtilization, timestamp, nil
+	return newReplicas, utilization, rawUtilization, timestamp, nil
 }
 
 // GetRawResourceReplicas calculates the desired replica count based on a target resource utilization (as a raw milli-value)
@@ -241,20 +249,30 @@ func (c *ReplicaCalculator) GetObjectMetricReplicas(currentReplicas int32, targe
 	}
 
 	usageRatio := float64(utilization) / float64(targetUtilization)
-	if math.Abs(1.0-usageRatio) <= c.tolerance {
-		// return the current replicas if the change would be too small
-		return currentReplicas, utilization, timestamp, nil
+	replicaCount, timestamp, err = c.getUsageRatioReplicaCount(currentReplicas, usageRatio, namespace, selector)
+	return replicaCount, utilization, timestamp, err
+}
+
+// getUsageRatioReplicaCount calculates the desired replica count based on usageRatio and ready pods count.
+// For currentReplicas=0 doesn't take into account ready pods count and tolerance to support scaling to zero pods.
+func (c *ReplicaCalculator) getUsageRatioReplicaCount(currentReplicas int32, usageRatio float64, namespace string, selector labels.Selector) (replicaCount int32, timestamp time.Time, err error) {
+	if currentReplicas != 0 {
+		if math.Abs(1.0-usageRatio) <= c.tolerance {
+			// return the current replicas if the change would be too small
+			return currentReplicas, timestamp, nil
+		}
+		readyPodCount := int64(0)
+		readyPodCount, err = c.getReadyPodsCount(namespace, selector)
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("unable to calculate ready pods: %s", err)
+		}
+		replicaCount = int32(math.Ceil(usageRatio * float64(readyPodCount)))
+	} else {
+		// Scale to zero or n pods depending on usageRatio
+		replicaCount = int32(math.Ceil(usageRatio))
 	}
 
-	readyPodCount, err := c.getReadyPodsCount(namespace, selector)
-
-	if err != nil {
-		return 0, 0, time.Time{}, fmt.Errorf("unable to calculate ready pods: %s", err)
-	}
-
-	replicaCount = int32(math.Ceil(usageRatio * float64(readyPodCount)))
-
-	return replicaCount, utilization, timestamp, nil
+	return replicaCount, timestamp, err
 }
 
 // GetObjectPerPodMetricReplicas calculates the desired replica count based on a target metric utilization (as a milli-value)
@@ -316,19 +334,9 @@ func (c *ReplicaCalculator) GetExternalMetricReplicas(currentReplicas int32, tar
 		utilization = utilization + val
 	}
 
-	readyPodCount, err := c.getReadyPodsCount(namespace, podSelector)
-
-	if err != nil {
-		return 0, 0, time.Time{}, fmt.Errorf("unable to calculate ready pods: %s", err)
-	}
-
 	usageRatio := float64(utilization) / float64(targetUtilization)
-	if math.Abs(1.0-usageRatio) <= c.tolerance {
-		// return the current replicas if the change would be too small
-		return currentReplicas, utilization, timestamp, nil
-	}
-
-	return int32(math.Ceil(usageRatio * float64(readyPodCount))), utilization, timestamp, nil
+	replicaCount, timestamp, err = c.getUsageRatioReplicaCount(currentReplicas, usageRatio, namespace, podSelector)
+	return replicaCount, utilization, timestamp, err
 }
 
 // GetExternalPerPodMetricReplicas calculates the desired replica count based on a

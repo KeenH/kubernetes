@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -101,12 +101,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := rt.RoundTrip(req)
 
 	if err != nil {
-		message := fmt.Sprintf("Error: '%s'\nTrying to reach: '%v'", err.Error(), req.URL.String())
-		resp = &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       ioutil.NopCloser(strings.NewReader(message)),
-		}
-		return resp, nil
+		return nil, fmt.Errorf("error trying to reach service: %w", err)
 	}
 
 	if redirect := resp.Header.Get("Location"); redirect != "" {

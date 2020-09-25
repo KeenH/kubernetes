@@ -17,29 +17,32 @@ load("//build:workspace_mirror.bzl", "mirror")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
 load("@io_bazel_rules_docker//container:container.bzl", "container_pull")
 
-CNI_VERSION = "0.7.5"
+CNI_VERSION = "0.8.7"
 _CNI_TARBALL_ARCH_SHA256 = {
-    "amd64": "3ca15c0a18ee830520cf3a95408be826cbd255a1535a38e0be9608b25ad8bf64",
-    "arm": "0eb4a528b5b2e4ce23ebc96e41b2f5280d5a64d41eec8dd8b16c3d66aaa0f6b8",
-    "arm64": "7fec91af78e9548df306f0ec43bea527c8c10cc3a9682c33e971c8522a7fcded",
-    "ppc64le": "9164a26ed8dd398b2fe3b15d9d456271dfa59aa537528d10572ea9fa2cef7679",
-    "s390x": "415cdcf02c65c22f5b7e55b0ab61208a10f2b95a0c8310176c771d07a9f448cf",
+    "amd64": "977824932d5667c7a37aa6a3cbba40100a6873e7bd97e83e8be837e3e7afd0a8",
+    "arm": "5757778f4c322ffd93d7586c60037b81a2eb79271af6f4edf9ff62b4f7868ed9",
+    "arm64": "ae13d7b5c05bd180ea9b5b68f44bdaa7bfb41034a2ef1d68fd8e1259797d642f",
+    "ppc64le": "70a8c5448ed03a3b27c6a89499a05285760a45252ec7eae4190c70ba5400d4ba",
+    "s390x": "3a0008f98ea5b4b6fd367cac3d8096f19bc080a779cf81fd0bcbc5bd1396ace7",
 }
 
-CRI_TOOLS_VERSION = "1.14.0"
+CRI_TOOLS_VERSION = "1.18.0"
 _CRI_TARBALL_ARCH_SHA256 = {
-    "amd64": "483c90a9fe679590df4332ba807991c49232e8cd326c307c575ecef7fe22327b",
-    "arm": "9910cecfd6558239ba015323066c7233d8371af359b9ddd0b2a35d5223bcf945",
-    "arm64": "f76b3d00a272c8d210e9a45f77d07d3770bee310d99c4fd9a72d6f55278882e5",
-    "ppc64le": "1e2cd11a1e025ed9755521cf13bb1bda986afa0052597a9bb44d31e62583413b",
-    "s390x": "8b7b5749cba88ef337997ae90aa04380e3cab2c040b44b505b2fcd691c4935e4",
+    "linux-386": "a1aaf482928d0a19aabeb321e406333c5ddecf77a532f7ec8c0bd6ca7014101e",
+    "linux-amd64": "876dd2b3d0d1c2590371f940fb1bf1fbd5f15aebfbe456703ee465d959700f4a",
+    "linux-arm": "d420925d10b47a234b7e51e9cf1039c3c09f2703945a99435549fcdd7487ae3a",
+    "linux-arm64": "95ba32c47ad690b1e3e24f60255273dd7d176e62b1a0b482e5b44a7c31639979",
+    "linux-ppc64le": "53a1fedbcee37f5d6c9480d21a9bb17f1c0214ffe7b640e39231a59927a665ef",
+    "linux-s390x": "114c8885a7eeb43bbe19baaf23c04a5761d06330ba8e7aa39a3a15c2051221f1",
+    "windows-386": "f37e8b5c499fb5a2bd06668782a7dc34e5acf2fda6d1bfe8f0ea9c773359a378",
+    "windows-amd64": "5045bcc6d8b0e6004be123ab99ea06e5b1b2ae1e586c968fcdf85fccd4d67ae1",
 }
 
-ETCD_VERSION = "3.3.10"
+ETCD_VERSION = "3.4.13"
 _ETCD_TARBALL_ARCH_SHA256 = {
-    "amd64": "1620a59150ec0a0124a65540e23891243feb2d9a628092fb1edcc23974724a45",
-    "arm64": "5ec97b0b872adce275b8130d19db314f7f2b803aeb24c4aae17a19e2d66853c4",
-    "ppc64le": "148fe96f0ec1813c5db9916199e96a913174304546bc8447a2d2f9fee4b8f6c2",
+    "amd64": "2ac029e47bab752dacdb7b30032f230f49e2f457cbc32e8f555c2210bb5ff107",
+    "arm64": "1934ebb9f9f6501f706111b78e5e321a7ff8d7792d3d96a76e2d01874e42a300",
+    "ppc64le": "fc77c3949b5178373734c3b276eb2281c954c3cd2225ccb05cdbdf721e1f775a",
 }
 
 # Dependencies needed for a Kubernetes "release", e.g. building docker images,
@@ -47,7 +50,7 @@ _ETCD_TARBALL_ARCH_SHA256 = {
 def release_dependencies():
     cni_tarballs()
     cri_tarballs()
-    debian_image_dependencies()
+    image_dependencies()
     etcd_tarballs()
 
 def cni_tarballs():
@@ -56,7 +59,7 @@ def cni_tarballs():
             name = "kubernetes_cni_%s" % arch,
             downloaded_file_path = "kubernetes_cni.tgz",
             sha256 = sha,
-            urls = mirror("https://storage.googleapis.com/kubernetes-release/network-plugins/cni-plugins-%s-v%s.tgz" % (arch, CNI_VERSION)),
+            urls = ["https://storage.googleapis.com/k8s-artifacts-cni/release/v%s/cni-plugins-linux-%s-v%s.tgz" % (CNI_VERSION, arch, CNI_VERSION)],
         )
 
 def cri_tarballs():
@@ -65,35 +68,49 @@ def cri_tarballs():
             name = "cri_tools_%s" % arch,
             downloaded_file_path = "cri_tools.tgz",
             sha256 = sha,
-            urls = mirror("https://github.com/kubernetes-incubator/cri-tools/releases/download/v%s/crictl-v%s-linux-%s.tar.gz" % (CRI_TOOLS_VERSION, CRI_TOOLS_VERSION, arch)),
+            urls = mirror("https://github.com/kubernetes-incubator/cri-tools/releases/download/v%s/crictl-v%s-%s.tar.gz" % (CRI_TOOLS_VERSION, CRI_TOOLS_VERSION, arch)),
         )
 
-# Use go get -u github.com/estesp/manifest-tool to find these values
+# Use skopeo to find these values: https://github.com/containers/skopeo
+#
+# Example
+# Manifest: skopeo inspect docker://gcr.io/k8s-staging-build-image/debian-base:v2.1.3
+# Arches: skopeo inspect --raw docker://gcr.io/k8s-staging-build-image/debian-base:v2.1.3
 _DEBIAN_BASE_DIGEST = {
-    "manifest": "sha256:6966a0aedd7592c18ff2dd803c08bd85780ee19f5e3a2e7cf908a4cd837afcde",
-    "amd64": "sha256:8ccb65cd2dd7e0c24193d0742a20e4a673dbd11af5a33f16fcd471a31486866c",
-    "arm": "sha256:3432b41de3f6dfffdc1386fce961cfd1f9f8e208b3a35070e10ef3e2a733cb17",
-    "arm64": "sha256:9189251e1d1eb4126d6e6add2e272338f9c8a6a3db38863044625bca4b667f31",
-    "ppc64le": "sha256:50aa659e1e75e4231ee8293c3b4115e5755bb0517142b9b4bddbc134bf4354db",
-    "s390x": "sha256:bbb8ee3a2aaca738c00809f450233d98029fea4e319d8faaa30aa94c8b17a806",
+    "manifest": "sha256:37cfe133a6ff3fc3aa4aa5ab9fda127861902940b8e8078fff7191c7a81be8d8",
+    "amd64": "sha256:dc06e242160076b72bd75135fb3dd0a9e91f386b2d812ec10cbf9e65864c755d",
+    "arm": "sha256:9c52e9b31d679102586381fb4a03bba73fc05992adacce31df3db6d2f75f010e",
+    "arm64": "sha256:9a3ae250d59f317c9cf1f7bf0b61c0d90e70012ee82996867655401968076ee4",
+    "ppc64le": "sha256:d7c50e06d954bedb1f362ce42380f7a059423f8cbd9e7b426a7f2d73dfb4431a",
+    "s390x": "sha256:7e6d43baf4972f7faa33f1179fb92ff858a3e0e23f78b96a5821d13199b9da91",
 }
 
+# Use skopeo to find these values: https://github.com/containers/skopeo
+#
+# Example
+# Manifest: skopeo inspect docker://gcr.io/k8s-staging-build-image/debian-iptables:v12.1.2
+# Arches: skopeo inspect --raw docker://gcr.io/k8s-staging-build-image/debian-iptables:v12.1.2
 _DEBIAN_IPTABLES_DIGEST = {
-    "manifest": "sha256:b522b0035dba3ac2d5c0dbaaf8217bd66248e790332ccfdf653e0f943a280dcf",
-    "amd64": "sha256:adc40e9ec817c15d35b26d1d6aa4d0f8096fba4c99e26a026159bb0bc98c6a89",
-    "arm": "sha256:58e8a1d3b187eed2d8d3664cd1c9723e5029698714a24dfca4b6ef42ea27a9d4",
-    "arm64": "sha256:1a63fdd216fe7b84561d40ab1ebaa0daae1fc73e4232a6caffbd8353d9a14cea",
-    "ppc64le": "sha256:9f90adbc7513cc96d92fcec7633c4b29e766dd31cf876af03c0b54374e22fa9c",
-    "s390x": "sha256:4f147708deff2a0163ee49b6980cc95423514bec5f4091612d65773b898fbdae",
+    "manifest": "sha256:fff1fd5ab38fefde8c9eee5470ed6ea737f30e5ab86e1c0c0d429fa6add28a84",
+    "amd64": "sha256:448c0e019689da3f4e238922824551d02578473f7b5d11604fffd528056caafa",
+    "arm": "sha256:08e267a6297640eb0b218a783cabaef0a039cc4734b4a2d9cb54ee41cd82656a",
+    "arm64": "sha256:a83cf1d501ad33f5aa93e2719baa59b054939b8a819c3997f915a6acfaa8e31a",
+    "ppc64le": "sha256:c86649ac541c35431a4df8ba44e7c61923d9e34679fd17da7723db7b6ecc5245",
+    "s390x": "sha256:53437fe32e13bb0bd2af08ddaaf2e908add8ab576574d881ba79544f34a774b2",
 }
 
-_DEBIAN_HYPERKUBE_BASE_DIGEST = {
-    "manifest": "sha256:8cabe02be6e86685d8860b7ace7c7addc9591a339728703027a4854677f1c772",
-    "amd64": "sha256:5d4ea2fb5fbe9a9a9da74f67cf2faefc881968bc39f2ac5d62d9167e575812a1",
-    "arm": "sha256:73260814af61522ff6aa48291df457d3bb0a91c4bf72e7cfa51fbaf03eb65fae",
-    "arm64": "sha256:78eeb1a31eef7c16f954444d64636d939d89307e752964ad6d9d06966c722da3",
-    "ppc64le": "sha256:92857d647abe8d9c7b4d7160cd5699112afc12fde369082a8ed00688b17928a9",
-    "s390x": "sha256:c11d74fa0538c67238576c247bfaddf95ebaa90cd03cb4d2f2ac3c6ebe0441e2",
+# Use skopeo to find these values: https://github.com/containers/skopeo
+#
+# Example
+# Manifest: skopeo inspect docker://gcr.io/k8s-staging-build-image/go-runner:buster-v2.0.1
+# Arches: skopeo inspect --raw docker://gcr.io/k8s-staging-build-image/go-runner:buster-v2.0.1
+_GO_RUNNER_DIGEST = {
+    "manifest": "sha256:687c17db2f5cd4aea13faa7ae56bee639a5b11f380c431a9800205624f53541c",
+    "amd64": "sha256:b02bdb3444b1e7fb14cb5b60174f0e8f0a087ff4c294352e6c31c17da99a4ee2",
+    "arm": "sha256:0d7563c814c0cd88bc5937b6e606d266409b5b7cee2deb6c04c6dcb6d7daaa5d",
+    "arm64": "sha256:78f42645ddfd2ab9dfc4053834aa0042c82c8c550f9f61a2a76fd9f1791e5308",
+    "ppc64le": "sha256:93e3ca63df801a5c1ad15bdbb9c50fa38e5db3479a92d8f4516c00dfd736f227",
+    "s390x": "sha256:d7ed7bd8d58a6570504f14a50d502c2df97f944378f9f5306519f3379cb92fe2",
 }
 
 def _digest(d, arch):
@@ -102,33 +119,35 @@ def _digest(d, arch):
         return d["manifest"]
     return d[arch]
 
-def debian_image_dependencies():
+def image_dependencies():
     for arch in SERVER_PLATFORMS["linux"]:
+        container_pull(
+            name = "go-runner-linux-" + arch,
+            architecture = arch,
+            digest = _digest(_GO_RUNNER_DIGEST, arch),
+            registry = "k8s.gcr.io/build-image",
+            repository = "go-runner",
+            tag = "buster-v2.0.1",  # ignored, but kept here for documentation
+        )
+
         container_pull(
             name = "debian-base-" + arch,
             architecture = arch,
             digest = _digest(_DEBIAN_BASE_DIGEST, arch),
-            registry = "k8s.gcr.io",
+            registry = "k8s.gcr.io/build-image",
             repository = "debian-base",
-            tag = "0.4.1",  # ignored, but kept here for documentation
+            # Ensure the digests above are updated to match a new tag
+            tag = "v2.1.3",  # ignored, but kept here for documentation
         )
 
         container_pull(
             name = "debian-iptables-" + arch,
             architecture = arch,
             digest = _digest(_DEBIAN_IPTABLES_DIGEST, arch),
-            registry = "k8s.gcr.io",
+            registry = "k8s.gcr.io/build-image",
             repository = "debian-iptables",
-            tag = "v11.0.2",  # ignored, but kept here for documentation
-        )
-
-        container_pull(
-            name = "debian-hyperkube-base-" + arch,
-            architecture = arch,
-            digest = _digest(_DEBIAN_HYPERKUBE_BASE_DIGEST, arch),
-            registry = "k8s.gcr.io",
-            repository = "debian-hyperkube-base",
-            tag = "0.12.1",  # ignored, but kept here for documentation
+            # Ensure the digests above are updated to match a new tag
+            tag = "v12.1.2",  # ignored, but kept here for documentation
         )
 
 def etcd_tarballs():

@@ -64,6 +64,24 @@ kube::util::wait_for_url() {
   return 1
 }
 
+# Example:  kube::util::wait_for_success 120 5 "kubectl get nodes|grep localhost"
+# arguments: wait time, sleep time, shell command
+# returns 0 if the shell command get output, 1 otherwise.
+kube::util::wait_for_success(){
+  local wait_time="$1"
+  local sleep_time="$2"
+  local cmd="$3"
+  while [ "$wait_time" -gt 0 ]; do
+    if eval "$cmd"; then
+      return 0
+    else
+      sleep "$sleep_time"
+      wait_time=$((wait_time-sleep_time))
+    fi
+  done
+  return 1
+}
+
 # Example:  kube::util::trap_add 'echo "in trap DEBUG"' DEBUG
 # See: http://stackoverflow.com/questions/3338030/multiple-bash-traps-for-the-same-signal
 kube::util::trap_add() {
@@ -182,17 +200,32 @@ kube::util::find-binary-for-platform() {
     "${KUBE_ROOT}/_output/local/bin/${platform}/${lookfor}"
     "${KUBE_ROOT}/platforms/${platform}/${lookfor}"
   )
-  # Also search for binary in bazel build tree.
-  # The bazel go rules place some binaries in subtrees like
-  # "bazel-bin/source/path/linux_amd64_pure_stripped/binaryname", so make sure
-  # the platform name is matched in the path.
-  while IFS=$'\n' read -r location; do
-    locations+=("$location");
-  done < <(find "${KUBE_ROOT}/bazel-bin/" -type f -executable \
-    \( -path "*/${platform/\//_}*/${lookfor}" -o -path "*/${lookfor}" \) 2>/dev/null || true)
+  # if we're looking for the host platform, add local non-platform-qualified search paths
+  if [[ "${platform}" = "$(kube::util::host_platform)" ]]; then
+    locations+=(
+      "${KUBE_ROOT}/_output/local/go/bin/${lookfor}"
+      "${KUBE_ROOT}/_output/dockerized/go/bin/${lookfor}"
+    );
+  fi
+
+  # Also search for binary in bazel build tree if bazel-out/ exists.
+  if [[ -d "${KUBE_ROOT}/bazel-out" ]]; then
+    while IFS=$'\n' read -r bin_build_mode; do
+      if grep -q "${platform}" "${bin_build_mode}"; then
+        # drop the extension to get the real binary path.
+        locations+=("${bin_build_mode%.*}")
+      fi
+    done < <(find "${KUBE_ROOT}/bazel-out/" -name "${lookfor}.go_build_mode")
+  fi
 
   # List most recently-updated location.
   local -r bin=$( (ls -t "${locations[@]}" 2>/dev/null || true) | head -1 )
+
+  if [[ -z "${bin}" ]]; then
+    kube::log::error "Failed to find binary ${lookfor} for platform ${platform}"
+    return 1
+  fi
+
   echo -n "${bin}"
 }
 
@@ -212,18 +245,12 @@ kube::util::gen-docs() {
   genkubedocs=$(kube::util::find-binary "genkubedocs")
   genman=$(kube::util::find-binary "genman")
   genyaml=$(kube::util::find-binary "genyaml")
-  genfeddocs=$(kube::util::find-binary "genfeddocs")
-
-  # TODO: If ${genfeddocs} is not used from anywhere (it isn't used at
-  # least from k/k tree), remove it completely.
-  kube::util::sourced_variable "${genfeddocs}"
 
   mkdir -p "${dest}/docs/user-guide/kubectl/"
   "${gendocs}" "${dest}/docs/user-guide/kubectl/"
   mkdir -p "${dest}/docs/admin/"
   "${genkubedocs}" "${dest}/docs/admin/" "kube-apiserver"
   "${genkubedocs}" "${dest}/docs/admin/" "kube-controller-manager"
-  "${genkubedocs}" "${dest}/docs/admin/" "cloud-controller-manager"
   "${genkubedocs}" "${dest}/docs/admin/" "kube-proxy"
   "${genkubedocs}" "${dest}/docs/admin/" "kube-scheduler"
   "${genkubedocs}" "${dest}/docs/admin/" "kubelet"
@@ -232,7 +259,6 @@ kube::util::gen-docs() {
   mkdir -p "${dest}/docs/man/man1/"
   "${genman}" "${dest}/docs/man/man1/" "kube-apiserver"
   "${genman}" "${dest}/docs/man/man1/" "kube-controller-manager"
-  "${genman}" "${dest}/docs/man/man1/" "cloud-controller-manager"
   "${genman}" "${dest}/docs/man/man1/" "kube-proxy"
   "${genman}" "${dest}/docs/man/man1/" "kube-scheduler"
   "${genman}" "${dest}/docs/man/man1/" "kubelet"
@@ -429,6 +455,22 @@ function kube::util::test_openssl_installed {
     fi
 
     OPENSSL_BIN=$(command -v openssl)
+}
+
+# Query the API server for client certificate authentication capabilities
+function kube::util::test_client_certificate_authentication_enabled {
+  local output
+  kube::util::test_openssl_installed
+
+  output=$(echo \
+    | "${OPENSSL_BIN}" s_client -connect "127.0.0.1:${SECURE_API_PORT}" 2> /dev/null \
+    | grep -A3 'Acceptable client certificate CA names')
+
+  if [[ "${output}" != *"/CN=127.0.0.1"* ]] && [[ "${output}" != *"CN = 127.0.0.1"* ]]; then
+    echo "API server not configured for client certificate authentication"
+    echo "Output of from acceptable client certificate check: ${output}"
+    exit 1
+  fi
 }
 
 # creates a client CA, args are sudo, dest-dir, ca-id, purpose
@@ -682,7 +724,10 @@ function kube::util::ensure_dockerized {
 #  SED: The name of the gnu-sed binary
 #
 function kube::util::ensure-gnu-sed {
-  if LANG=C sed --help 2>&1 | grep -q GNU; then
+  # NOTE: the echo below is a workaround to ensure sed is executed before the grep.
+  # see: https://github.com/kubernetes/kubernetes/issues/87251
+  sed_help="$(LANG=C sed --help 2>&1 || true)"
+  if echo "${sed_help}" | grep -q "GNU\|BusyBox"; then
     SED="sed"
   elif command -v gsed &>/dev/null; then
     SED="gsed"
@@ -714,7 +759,7 @@ function kube::util::check-file-in-alphabetical-order {
 # Checks whether jq is installed.
 function kube::util::require-jq {
   if ! command -v jq &>/dev/null; then
-    echo "jq not found. Please install." 1>&2
+    kube::log::error  "jq not found. Please install."
     return 1
   fi
 }
